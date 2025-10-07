@@ -37,8 +37,8 @@ async def process_document(
     if not text_to_process:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No text provided")
     
-    # Process with HuggingFace
-    analysis_result = await hf_service.analyze_text(text_to_process, request.model_name)
+    # Process with LLM
+    analysis_result = await hf_service.analyze_text(text_to_process)
     
     # Save result
     audit_result = AuditResult(

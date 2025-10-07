@@ -19,6 +19,9 @@ class Upload(Base):
     original_filename = Column(String, nullable=True)
     file_size = Column(Integer, nullable=True)
     mime_type = Column(String, nullable=True)
+    status = Column(String, default="pending", nullable=False)
+    error_message = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now()) 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class AuditResult(Base):

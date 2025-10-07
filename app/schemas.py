@@ -47,7 +47,6 @@ class UploadResponse(BaseModel):
 class ProcessRequest(BaseModel):
     text: Optional[str] = None
     upload_id: Optional[int] = None
-    model_name: str = "google/flan-t5-base"
 
 class AuditResultResponse(BaseModel):
     id: int
@@ -57,3 +56,23 @@ class AuditResultResponse(BaseModel):
     created_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
+    
+class UploadWithStatusResponse(BaseModel):
+    id: int
+    original_filename: str
+    file_size: int
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class ProcessFileRequest(BaseModel):
+    upload_id: int
+
+class FileProcessingResponse(BaseModel):
+    upload_id: int
+    status: str
+    message: str
+    result_id: Optional[int] = None
