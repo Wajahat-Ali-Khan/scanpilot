@@ -15,11 +15,17 @@ class Settings(BaseSettings):
     HF_BASE_URL: str
     HF_MODEL_NAME: str
     
+    # Stripe
+    STRIPE_SECRET_KEY: str
+    STRIPE_PUBLISHABLE_KEY: str
+    STRIPE_WEBHOOK_SECRET: str
+    
     @property
     def origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
     
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()
