@@ -36,7 +36,7 @@ async def get_documents(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    result = await db.execute(select(models.Document))
+    result = await db.execute(select(models.Document).where(models.Document.owner_id == current_user.id))
     return result.scalars().all()
 
 @router.get("/{doc_id}", response_model=schemas.DocumentResponse)
@@ -226,3 +226,22 @@ async def create_document_from_upload(
     await db.commit()
     await db.refresh(new_doc)
     return new_doc
+
+@router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check ownership
+    if doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this document")
+
+    await db.delete(doc)
+    await db.commit()
+    return None
