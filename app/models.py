@@ -156,3 +156,15 @@ class Referral(Base):
     # Relationships
     referrer = relationship("User", foreign_keys=[referrer_id])
     referee = relationship("User", foreign_keys=[referee_id])
+
+class CreditCost(Base):
+    """Configurable credit costs for different operations"""
+    __tablename__ = "credit_costs"
+    
+    id = Column(Integer, primary_key=True)
+    operation_type = Column(String, unique=True, nullable=False, index=True)  # file_processing, document_creation, ai_suggestion
+    cost = Column(Integer, nullable=False)  # Number of credits required
+    description = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

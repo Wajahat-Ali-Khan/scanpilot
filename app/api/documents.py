@@ -173,12 +173,28 @@ async def get_ai_suggestions(
 ):
     """Get AI-powered suggestions for document text"""
     from app.services.ai import generate_suggestion
+    from app.api.credits import get_credit_cost, consume_credits
     
     # Verify document exists and user has access
     result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    # CONSUME CREDITS BEFORE GENERATING AI SUGGESTIONS
+    credit_cost = await get_credit_cost("ai_suggestion", db)
+    await consume_credits(
+        user_id=current_user.id,
+        amount=credit_cost,
+        operation_type="ai_suggestion",
+        description=f"AI suggestion for document: {doc.title}",
+        metadata={
+            "operation_type": "ai_suggestion",
+            "document_id": doc_id,
+            "document_title": doc.title
+        },
+        db=db
+    )
     
     context = request.get("context", "")
     selection = request.get("selection", "")
@@ -215,6 +231,23 @@ async def create_document_from_upload(
     result = await db.execute(select(models.AuditResult).where(models.AuditResult.upload_id == upload_id))
     audit = result.scalars().first()
     content = audit.input_text if audit else ""
+
+    # CONSUME CREDITS BEFORE CREATING DOCUMENT
+    from app.api.credits import get_credit_cost, consume_credits
+    
+    credit_cost = await get_credit_cost("document_creation", db)
+    await consume_credits(
+        user_id=current_user.id,
+        amount=credit_cost,
+        operation_type="document_creation",
+        description=f"Document created from upload: {upload.original_filename}",
+        metadata={
+            "operation_type": "document_creation",
+            "upload_id": upload_id,
+            "filename": upload.original_filename
+        },
+        db=db
+    )
 
     # 4. Create new document
     new_doc = models.Document(

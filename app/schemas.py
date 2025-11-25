@@ -248,3 +248,19 @@ class UsageStatsResponse(BaseModel):
     total_credits_allocated: int
     usage_percentage: float
     top_operations: list[Dict[str, Any]]
+
+# Credit Cost Schemas
+class CreditCostResponse(BaseModel):
+    id: int
+    operation_type: str
+    cost: int
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class CreditCostUpdate(BaseModel):
+    cost: int = Field(..., ge=0, description="Credit cost (must be >= 0)")
+    description: Optional[str] = None
+    is_active: Optional[bool] = None

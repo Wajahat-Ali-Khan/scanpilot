@@ -4,7 +4,7 @@ from sqlalchemy import text
 from pathlib import Path
 
 from ..db import get_db
-from .. import models
+from .. import models, schemas
 from app.auth import get_current_user
 
 router = APIRouter(
@@ -142,3 +142,79 @@ async def get_analytics(
         "subscriptions_by_plan": plan_stats,
         "note": "More analytics coming soon (MRR, ARR, churn rate, etc.)"
     }
+
+# ===== CREDIT COST MANAGEMENT =====
+
+@router.get("/credit-costs", response_model=list)
+async def get_all_credit_costs(
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get all credit cost configurations"""
+    # TODO: Add admin role check
+    
+    from sqlalchemy import select
+    
+    result = await db.execute(
+        select(models.CreditCost).order_by(models.CreditCost.operation_type)
+    )
+    costs = result.scalars().all()
+    
+    return [schemas.CreditCostResponse.model_validate(cost) for cost in costs]
+
+@router.get("/credit-costs/{operation_type}")
+async def get_credit_cost(
+    operation_type: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get credit cost for a specific operation"""
+    # TODO: Add admin role check
+    
+    from sqlalchemy import select
+    
+    result = await db.execute(
+        select(models.CreditCost).where(models.CreditCost.operation_type == operation_type)
+    )
+    cost = result.scalar_one_or_none()
+    
+    if not cost:
+        raise HTTPException(status_code=404, detail=f"Credit cost not found for: {operation_type}")
+    
+    return schemas.CreditCostResponse.model_validate(cost)
+
+@router.put("/credit-costs/{operation_type}")
+async def update_credit_cost(
+    operation_type: str,
+    update_data: schemas.CreditCostUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Update credit cost for an operation"""
+    # TODO: Add admin role check
+    
+    from sqlalchemy import select
+    
+    result = await db.execute(
+        select(models.CreditCost).where(models.CreditCost.operation_type == operation_type)
+    )
+    cost = result.scalar_one_or_none()
+    
+    if not cost:
+        raise HTTPException(status_code=404, detail=f"Credit cost not found for: {operation_type}")
+    
+    # Update fields
+    cost.cost = update_data.cost
+    if update_data.description is not None:
+        cost.description = update_data.description
+    if update_data.is_active is not None:
+        cost.is_active = update_data.is_active
+    
+    await db.commit()
+    await db.refresh(cost)
+    
+    return {
+        "message": f"Credit cost updated for {operation_type}",
+        "cost": schemas.CreditCostResponse.model_validate(cost)
+    }
+

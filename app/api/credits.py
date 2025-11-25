@@ -252,3 +252,26 @@ async def consume_credits(
         "credits_consumed": amount,
         "credits_remaining": subscription.credits_remaining + subscription.credits_rollover
     }
+
+async def get_credit_cost(operation_type: str, db: AsyncSession) -> int:
+    """
+    Get the credit cost for a specific operation type from database
+    Returns the cost, or raises error if not found
+    """
+    result = await db.execute(
+        select(models.CreditCost).where(
+            and_(
+                models.CreditCost.operation_type == operation_type,
+                models.CreditCost.is_active == True
+            )
+        )
+    )
+    credit_cost = result.scalar_one_or_none()
+    
+    if not credit_cost:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Credit cost configuration not found for operation: {operation_type}"
+        )
+    
+    return credit_cost.cost
