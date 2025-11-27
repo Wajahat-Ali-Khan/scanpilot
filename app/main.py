@@ -1,14 +1,16 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from contextlib import asynccontextmanager
 from .config import settings
 from .db import init_db
+from .cache import get_redis, close_redis
+from .middleware.error_handler import ErrorHandlerMiddleware, validation_exception_handler
 from .api import auth, users, uploads, results, documents, ws, subscriptions, credits, referrals, admin, webhooks, collaborators, search
 import os
-from fastapi import Request
 
 # Create uploads directory
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -17,9 +19,19 @@ os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
+    # Initialize Redis connection
+    try:
+        await get_redis()
+        print("✅ Redis connection established")
+    except Exception as e:
+        print(f"⚠️  Redis connection failed: {e}")
+        print("   Application will continue without caching")
+    
     yield
+    
     # Shutdown
-    pass
+    await close_redis()
+    print("✅ Redis connection closed")
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
@@ -31,6 +43,10 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+# Add error handling middleware
+app.add_middleware(ErrorHandlerMiddleware)
 
 # CORS
 app.add_middleware(

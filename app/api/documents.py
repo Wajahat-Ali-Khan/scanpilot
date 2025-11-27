@@ -1,305 +1,174 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from typing import List
+from typing import List, Dict, Any
 from app.db import get_db
 from app import models, schemas
 from app.auth import get_current_user
 from app.middleware.subscription import check_document_limit, check_collaborator_limit
+from app.services.document_service import DocumentService
+from app.services.comment_service import CommentService
 
 router = APIRouter(
     prefix="/api/documents",
     tags=["documents"]
 )
 
+
+def get_document_service(db: AsyncSession = Depends(get_db)) -> DocumentService:
+    """Dependency to get DocumentService instance."""
+    return DocumentService(db)
+
+
+def get_comment_service(db: AsyncSession = Depends(get_db)) -> CommentService:
+    """Dependency to get CommentService instance."""
+    return CommentService(db)
+
+
 @router.post("/", response_model=schemas.DocumentResponse)
 async def create_document(
     doc: schemas.DocumentCreate,
+    current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
+    doc_service: DocumentService = Depends(get_document_service)
+) -> models.Document:
+    """Create a new document."""
     # Check if user has reached document limit
     await check_document_limit(current_user, db)
     
-    new_doc = models.Document(
+    return await doc_service.create_document(
         title=doc.title,
         content=doc.content,
         owner_id=current_user.id
     )
-    db.add(new_doc)
-    await db.commit()
-    await db.refresh(new_doc)
-    return new_doc
+
 
 @router.get("/", response_model=schemas.PaginatedResponse[schemas.DocumentResponse])
 async def get_documents(
     page: int = 1,
     size: int = 10,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    offset = (page - 1) * size
-    
-    # Get total count
-    count_query = select(func.count()).select_from(models.Document).where(models.Document.owner_id == current_user.id)
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
-    
-    # Get items
-    query = (
-        select(models.Document)
-        .where(models.Document.owner_id == current_user.id)
-        .order_by(models.Document.created_at.desc())
-        .offset(offset)
-        .limit(size)
+    current_user: models.User = Depends(get_current_user),
+    doc_service: DocumentService = Depends(get_document_service)
+) -> Dict[str, Any]:
+    """Get paginated list of user's documents."""
+    return await doc_service.get_documents_paginated(
+        owner_id=current_user.id,
+        page=page,
+        size=size
     )
-    result = await db.execute(query)
-    items = result.scalars().all()
-    
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "size": size,
-        "pages": (total + size - 1) // size
-    }
+
 
 @router.get("/{doc_id}", response_model=schemas.DocumentResponse)
 async def get_document(
     doc_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return doc
+    doc_service: DocumentService = Depends(get_document_service)
+) -> models.Document:
+    """Get a specific document by ID."""
+    return await doc_service.get_document(doc_id)
+
 
 @router.put("/{doc_id}", response_model=schemas.DocumentResponse)
 async def update_document(
     doc_id: int,
     doc_update: schemas.DocumentUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    if doc_update.title is not None:
-        doc.title = doc_update.title
-    if doc_update.content is not None:
-        # Create a version before updating
-        version = models.DocumentVersion(
-            document_id=doc.id,
-            content=doc.content if doc.content else "",
-            created_by=current_user.id
-        )
-        db.add(version)
-        doc.content = doc_update.content
-        
-    await db.commit()
-    await db.refresh(doc)
-    return doc
+    current_user: models.User = Depends(get_current_user),
+    doc_service: DocumentService = Depends(get_document_service)
+) -> models.Document:
+    """Update a document's title and/or content."""
+    return await doc_service.update_document(
+        doc_id=doc_id,
+        title=doc_update.title,
+        content=doc_update.content,
+        created_by=current_user.id
+    )
+
+
+@router.patch("/{doc_id}/title", response_model=schemas.DocumentResponse)
+async def update_document_title(
+    doc_id: int,
+    title_update: schemas.DocumentTitleUpdate,
+    doc_service: DocumentService = Depends(get_document_service)
+) -> models.Document:
+    """Update only the document title."""
+    return await doc_service.update_title(doc_id, title_update.title)
+
+
+@router.delete("/{doc_id}")
+async def delete_document(
+    doc_id: int,
+    current_user: models.User = Depends(get_current_user),
+    doc_service: DocumentService = Depends(get_document_service)
+) -> Dict[str, str]:
+    """Delete a document."""
+    await doc_service.delete_document(doc_id, current_user.id)
+    return {"message": "Document deleted successfully"}
+
+
+@router.post("/from_upload/{upload_id}", response_model=schemas.DocumentResponse)
+async def create_document_from_upload(
+    upload_id: int,
+    current_user: models.User = Depends(get_current_user),
+    doc_service: DocumentService = Depends(get_document_service)
+) -> models.Document:
+    """Create a document from an uploaded file."""
+    return await doc_service.create_from_upload(
+        upload_id=upload_id,
+        owner_id=current_user.id
+    )
+
+
+@router.get("/{doc_id}/versions", response_model=List[schemas.DocumentVersionResponse])
+async def get_versions(
+    doc_id: int,
+    doc_service: DocumentService = Depends(get_document_service)
+) -> List[Dict[str, Any]]:
+    """Get version history for a document."""
+    return await doc_service.get_versions(doc_id)
+
 
 @router.post("/{doc_id}/comments", response_model=schemas.CommentResponse)
 async def add_comment(
     doc_id: int,
     comment: schemas.CommentCreate,
+    current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
+    comment_service: CommentService = Depends(get_comment_service)
+) -> models.Comment:
+    """Add a comment to a document."""
     # Check collaborator limit
     await check_collaborator_limit(doc_id, current_user, db)
-        
-    new_comment = models.Comment(
+    
+    return await comment_service.create_comment(
         document_id=doc_id,
         user_id=current_user.id,
         content=comment.content,
         position_start=comment.position_start,
         position_end=comment.position_end
     )
-    db.add(new_comment)
-    await db.commit()
-    await db.refresh(new_comment)
-    return new_comment
+
 
 @router.get("/{doc_id}/comments", response_model=List[schemas.CommentResponse])
 async def get_comments(
     doc_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    result = await db.execute(select(models.Comment).where(models.Comment.document_id == doc_id))
-    return result.scalars().all()
+    comment_service: CommentService = Depends(get_comment_service)
+) -> List[models.Comment]:
+    """Get all comments for a document."""
+    return await comment_service.get_comments(doc_id)
 
-@router.get("/{doc_id}/versions", response_model=List[schemas.DocumentVersionResponse])
-async def get_versions(
-    doc_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    # Join with User table to get creator information
-    result = await db.execute(
-        select(models.DocumentVersion, models.User)
-        .join(models.User, models.DocumentVersion.created_by == models.User.id, isouter=True)
-        .where(models.DocumentVersion.document_id == doc_id)
-        .order_by(models.DocumentVersion.created_at.desc())
-    )
-    
-    versions_with_users = result.all()
-    
-    # Build response with user info
-    response = []
-    for version, user in versions_with_users:
-        version_dict = {
-            "id": version.id,
-            "document_id": version.document_id,
-            "content": version.content,
-            "created_at": version.created_at,
-            "created_by": version.created_by,
-            "created_by_email": user.email if user else None,
-            "created_by_name": user.full_name if user else None
-        }
-        response.append(version_dict)
-    
-    return response
-
-@router.patch("/{doc_id}/title", response_model=schemas.DocumentResponse)
-async def update_document_title(
-    doc_id: int,
-    title_update: schemas.DocumentTitleUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    doc.title = title_update.title
-    await db.commit()
-    await db.refresh(doc)
-    return doc
 
 @router.post("/{doc_id}/ai-suggest")
 async def get_ai_suggestions(
     doc_id: int,
     request: dict,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    """Get AI-powered suggestions for document text"""
-    from app.services.ai import generate_suggestion
-    from app.api.credits import get_credit_cost, consume_credits
-    
-    # Verify document exists and user has access
-    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # CONSUME CREDITS BEFORE GENERATING AI SUGGESTIONS
-    credit_cost = await get_credit_cost("ai_suggestion", db)
-    await consume_credits(
-        user_id=current_user.id,
-        amount=credit_cost,
-        operation_type="ai_suggestion",
-        description=f"AI suggestion for document: {doc.title}",
-        metadata={
-            "operation_type": "ai_suggestion",
-            "document_id": doc_id,
-            "document_title": doc.title
-        },
-        db=db
-    )
-    
+    current_user: models.User = Depends(get_current_user),
+    doc_service: DocumentService = Depends(get_document_service)
+) -> Dict[str, Any]:
+    """Get AI-powered suggestions for document text."""
     context = request.get("context", "")
     selection = request.get("selection", "")
     
-    suggestions = await generate_suggestion(context, selection)
-    return suggestions
-
-
-@router.post("/from_upload/{upload_id}", response_model=schemas.DocumentResponse)
-async def create_document_from_upload(
-    upload_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    # 1. Get the upload
-    result = await db.execute(select(models.Upload).where(models.Upload.id == upload_id))
-    upload = result.scalar_one_or_none()
-    if not upload:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    # 2. Check if a document with this title already exists for this user
-    # This is a heuristic to avoid duplicates. Ideally we'd have a foreign key.
-    result = await db.execute(
-        select(models.Document).where(
-            models.Document.owner_id == current_user.id,
-            models.Document.title == upload.original_filename
-        )
+    return await doc_service.get_ai_suggestions(
+        doc_id=doc_id,
+        context=context,
+        selection=selection,
+        user_id=current_user.id
     )
-    existing_doc = result.scalars().first()
-    if existing_doc:
-        return existing_doc
-
-    # 3. Get the content from AuditResult
-    result = await db.execute(select(models.AuditResult).where(models.AuditResult.upload_id == upload_id))
-    audit = result.scalars().first()
-    content = audit.input_text if audit else ""
-
-    # CONSUME CREDITS BEFORE CREATING DOCUMENT
-    from app.api.credits import get_credit_cost, consume_credits
-    
-    credit_cost = await get_credit_cost("document_creation", db)
-    await consume_credits(
-        user_id=current_user.id,
-        amount=credit_cost,
-        operation_type="document_creation",
-        description=f"Document created from upload: {upload.original_filename}",
-        metadata={
-            "operation_type": "document_creation",
-            "upload_id": upload_id,
-            "filename": upload.original_filename
-        },
-        db=db
-    )
-
-    # 4. Create new document
-    new_doc = models.Document(
-        title=upload.original_filename,
-        content=content,
-        owner_id=current_user.id
-    )
-    db.add(new_doc)
-    await db.commit()
-    await db.refresh(new_doc)
-    return new_doc
-
-@router.delete("/{doc_id}")
-async def delete_document(
-    doc_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # Check ownership
-    if doc.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this document")
-
-    await db.delete(doc)
-    await db.commit()
-    return {"message": "Document deleted successfully"}
