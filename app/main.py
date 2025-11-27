@@ -6,7 +6,7 @@ from slowapi.errors import RateLimitExceeded
 from contextlib import asynccontextmanager
 from .config import settings
 from .db import init_db
-from .api import auth, users, uploads, results, documents, ws, subscriptions, credits, referrals, admin, webhooks, collaborators
+from .api import auth, users, uploads, results, documents, ws, subscriptions, credits, referrals, admin, webhooks, collaborators, search
 import os
 from fastapi import Request
 
@@ -49,6 +49,7 @@ app.include_router(results.router)
 app.include_router(documents.router)
 app.include_router(collaborators.router)
 app.include_router(ws.router)
+app.include_router(search.router)
 
 # Subscription system routers
 app.include_router(subscriptions.router)

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List
 from app.db import get_db
 from app import models, schemas
@@ -31,13 +31,38 @@ async def create_document(
     await db.refresh(new_doc)
     return new_doc
 
-@router.get("/", response_model=List[schemas.DocumentResponse])
+@router.get("/", response_model=schemas.PaginatedResponse[schemas.DocumentResponse])
 async def get_documents(
+    page: int = 1,
+    size: int = 10,
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    result = await db.execute(select(models.Document).where(models.Document.owner_id == current_user.id))
-    return result.scalars().all()
+    offset = (page - 1) * size
+    
+    # Get total count
+    count_query = select(func.count()).select_from(models.Document).where(models.Document.owner_id == current_user.id)
+    total_result = await db.execute(count_query)
+    total = total_result.scalar_one()
+    
+    # Get items
+    query = (
+        select(models.Document)
+        .where(models.Document.owner_id == current_user.id)
+        .order_by(models.Document.created_at.desc())
+        .offset(offset)
+        .limit(size)
+    )
+    result = await db.execute(query)
+    items = result.scalars().all()
+    
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": (total + size - 1) // size
+    }
 
 @router.get("/{doc_id}", response_model=schemas.DocumentResponse)
 async def get_document(
@@ -260,7 +285,7 @@ async def create_document_from_upload(
     await db.refresh(new_doc)
     return new_doc
 
-@router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{doc_id}")
 async def delete_document(
     doc_id: int,
     db: AsyncSession = Depends(get_db),
@@ -277,4 +302,4 @@ async def delete_document(
 
     await db.delete(doc)
     await db.commit()
-    return None
+    return {"message": "Document deleted successfully"}

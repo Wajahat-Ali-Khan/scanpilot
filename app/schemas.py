@@ -1,6 +1,15 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Generic, TypeVar, List
 from datetime import datetime
+
+T = TypeVar("T")
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    items: List[T]
+    total: int
+    page: int
+    size: int
+    pages: int
 
 # User Schemas
 class UserCreate(BaseModel):

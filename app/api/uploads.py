@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from app.db import get_db
 from app.models import User, Upload, AuditResult
-from app.schemas import UploadWithStatusResponse, ProcessFileRequest, FileProcessingResponse
+from app.schemas import UploadWithStatusResponse, ProcessFileRequest, FileProcessingResponse, PaginatedResponse
 from app.auth import get_current_user
 from app.services.processing import save_upload_file
 from app.services.file_processor import FileProcessor
@@ -53,19 +54,39 @@ async def upload_file(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-@router.get("/", response_model=List[UploadWithStatusResponse])
+@router.get("/", response_model=PaginatedResponse[UploadWithStatusResponse])
 async def get_all_uploads(
+    page: int = 1,
+    size: int = 10,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all uploaded files for current user"""
-    result = await db.execute(
+    offset = (page - 1) * size
+    
+    # Get total count
+    count_query = select(func.count()).select_from(Upload).where(Upload.user_id == current_user.id)
+    total_result = await db.execute(count_query)
+    total = total_result.scalar_one()
+    
+    # Get items
+    query = (
         select(Upload)
         .where(Upload.user_id == current_user.id)
         .order_by(Upload.created_at.desc())
+        .offset(offset)
+        .limit(size)
     )
+    result = await db.execute(query)
     uploads = result.scalars().all()
-    return uploads
+    
+    return {
+        "items": uploads,
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": (total + size - 1) // size
+    }
 
 
 @router.post("/process", response_model=FileProcessingResponse)
@@ -151,7 +172,11 @@ async def process_file(
             raise ValueError("File appears to be empty or contains insufficient text")
         
         # Step 2: Perform document analysis (REAL ANALYSIS)
-        document_analysis = file_processor.analyze_document(text_content)
+        # Offload CPU-intensive analysis to thread pool
+        document_analysis = await run_in_threadpool(
+            file_processor.analyze_document,
+            text_content
+        )
         
         # Step 3: Get AI insights from Hugging Face (REAL AI)
         ai_analysis = await hf_service.analyze_text(
@@ -167,11 +192,11 @@ async def process_file(
             "total_characters": len(text_content)
         }
         
-        # Step 4: Save result to database
+        # Step 4: Save result to database - STORE FULL TEXT CONTENT
         audit_result = AuditResult(
             user_id=current_user.id,
             upload_id=upload.id,
-            input_text=text_content[:500],
+            input_text=text_content,  # Store full text, not truncated
             result_json=combined_result,
             status="completed"
         )
